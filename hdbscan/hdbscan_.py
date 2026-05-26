@@ -152,14 +152,21 @@ def _hdbscan_generic(
     # returned by mst_linkage_core (i.e. just the order of points to be merged)
     if gen_min_span_tree:
         result_min_span_tree = min_spanning_tree.copy()
+        # Build a set of merged points incrementally instead of copying
+        # a growing slice of the MST array on every iteration.
+        merged = set(int(min_spanning_tree[0, c]) for c in range(2))
         for index, row in enumerate(result_min_span_tree[1:], 1):
-            candidates = np.where(isclose(mutual_reachability_[int(row[1])], row[2]))[0]
-            candidates = np.intersect1d(
-                candidates, min_spanning_tree[:index, :2].astype(int)
-            )
-            candidates = candidates[candidates != row[1]]
-            assert len(candidates) > 0
-            row[0] = candidates[0]
+            point = int(row[1])
+            weight = row[2]
+            mr_row = mutual_reachability_[point]
+            for c in np.where(isclose(mr_row, weight))[0]:
+                if c != point and int(c) in merged:
+                    row[0] = c
+                    break
+            else:
+                assert False, "No candidate found for MST edge reconstruction"
+            merged.add(int(min_spanning_tree[index, 0]))
+            merged.add(int(min_spanning_tree[index, 1]))
     else:
         result_min_span_tree = None
 
