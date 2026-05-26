@@ -435,6 +435,7 @@ cdef np.ndarray[np.intp_t, ndim=1] do_labelling(
     cdef np.intp_t child
     cdef np.intp_t n
     cdef np.intp_t cluster
+    cdef np.intp_t needs_lambda_lookup
 
     child_array = tree['child']
     parent_array = tree['parent']
@@ -446,9 +447,27 @@ cdef np.ndarray[np.intp_t, ndim=1] do_labelling(
 
     union_find = TreeUnionFind(parent_array.max() + 1)
 
+    needs_lambda_lookup = (allow_single_cluster or match_reference_implementation)
+
+    # Use typed numpy arrays for O(1) indexed lookup instead of O(T) scans.
+    # Only allocated when the code paths that need them are active.
+    cdef np.ndarray[np.double_t, ndim=1] child_lambda_arr
+    cdef np.double_t *child_lambda
+    cdef np.double_t parent_max_lam
+    cdef np.ndarray[np.double_t, ndim=1] parent_max_lambda_arr
+
+    if needs_lambda_lookup:
+        child_lambda_arr = np.zeros(parent_array.max() + 1, dtype=np.double)
+        child_lambda = <np.double_t *> child_lambda_arr.data
+        parent_max_lambda_arr = np.zeros(parent_array.max() + 1, dtype=np.double)
+
     for n in range(tree.shape[0]):
         child = child_array[n]
         parent = parent_array[n]
+        if needs_lambda_lookup:
+            child_lambda[child] = lambda_array[n]
+            if lambda_array[n] > parent_max_lambda_arr[parent]:
+                parent_max_lambda_arr[parent] = lambda_array[n]
         if child not in clusters:
             union_find.union_(parent, child)
 
@@ -458,15 +477,12 @@ cdef np.ndarray[np.intp_t, ndim=1] do_labelling(
             result[n] = -1
         elif cluster == root_cluster:
             if len(clusters) == 1 and allow_single_cluster and cluster in cluster_label_map:
-                # check if `cluster` still exists in `cluster_label_map` and that it was not pruned
-                # by `max_cluster_size` or `cluster_selection_epsilon_max` before executing this
                 if cluster_selection_epsilon != 0.0:
-                    if tree['lambda_val'][tree['child'] == n] >= 1 / cluster_selection_epsilon:
+                    if child_lambda[n] >= 1.0 / cluster_selection_epsilon:
                         result[n] = cluster_label_map[cluster]
                     else:
                         result[n] = -1
-                elif tree['lambda_val'][tree['child'] == n] >= \
-                     tree['lambda_val'][tree['parent'] == cluster].max():
+                elif child_lambda[n] >= parent_max_lambda_arr[cluster]:
                     result[n] = cluster_label_map[cluster]
                 else:
                     result[n] = -1
@@ -474,9 +490,7 @@ cdef np.ndarray[np.intp_t, ndim=1] do_labelling(
                 result[n] = -1
         else:
             if match_reference_implementation:
-                point_lambda = lambda_array[child_array == n][0]
-                cluster_lambda = lambda_array[child_array == cluster][0]
-                if point_lambda > cluster_lambda:
+                if child_lambda[n] > child_lambda[cluster]:
                     result[n] = cluster_label_map[cluster]
                 else:
                     result[n] = -1
