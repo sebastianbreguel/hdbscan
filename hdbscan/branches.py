@@ -707,10 +707,13 @@ def _remap_edge_lists(edge_lists, internal_to_raw):
     internal_to_raw: dict
         A mapping from internal integer index to the raw integer index.
     """
+    max_key = max(internal_to_raw.keys())
+    lookup = np.empty(max_key + 1, dtype=np.intp)
+    for k, v in internal_to_raw.items():
+        lookup[k] = v
     for graph in edge_lists:
-        for edge in graph:
-            edge[0] = internal_to_raw[edge[0]]
-            edge[1] = internal_to_raw[edge[1]]
+        graph[:, 0] = lookup[graph[:, 0].astype(np.intp)]
+        graph[:, 1] = lookup[graph[:, 1].astype(np.intp)]
 
 
 def _remap_point_lists(point_lists, internal_to_raw):
@@ -724,9 +727,12 @@ def _remap_point_lists(point_lists, internal_to_raw):
     internal_to_raw: dict
         A mapping from internal integer index to the raw integer index.
     """
+    max_key = max(internal_to_raw.keys())
+    lookup = np.empty(max_key + 1, dtype=np.intp)
+    for k, v in internal_to_raw.items():
+        lookup[k] = v
     for points in point_lists:
-        for idx in range(len(points)):
-            points[idx] = internal_to_raw[points[idx]]
+        points[:] = lookup[points.astype(np.intp)]
 
 
 def _remap_labels(old_labels, finite_index, num_points, fill_value=-1):
