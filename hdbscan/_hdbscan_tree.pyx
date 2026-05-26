@@ -591,9 +591,17 @@ cpdef np.ndarray get_stability_scores(np.ndarray labels, set clusters,
     cdef np.intp_t cluster_size
     cdef np.intp_t n
 
-    result = np.empty(len(clusters), dtype=np.double)
+    # One O(n) pass to count all cluster sizes, instead of O(n) per cluster.
+    cdef np.ndarray[np.intp_t, ndim=1] cluster_sizes
+    cdef np.intp_t num_labels = len(clusters)
+    if num_labels > 0:
+        cluster_sizes = np.bincount(labels[labels >= 0], minlength=num_labels)
+    else:
+        cluster_sizes = np.zeros(0, dtype=np.intp)
+
+    result = np.empty(num_labels, dtype=np.double)
     for n, c in enumerate(sorted(list(clusters))):
-        cluster_size = np.sum(labels == n)
+        cluster_size = cluster_sizes[n] if n < cluster_sizes.shape[0] else 0
         if np.isinf(max_lambda) or max_lambda == 0.0 or cluster_size == 0:
             result[n] = 1.0
         else:
