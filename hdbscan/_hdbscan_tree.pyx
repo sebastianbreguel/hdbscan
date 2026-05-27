@@ -165,21 +165,16 @@ cpdef np.ndarray condense_tree(np.ndarray[np.double_t, ndim=2] hierarchy,
 cpdef dict compute_stability(np.ndarray condensed_tree):
 
     cdef np.ndarray[np.double_t, ndim=1] result_arr
-    cdef np.ndarray sorted_child_data
-    cdef np.ndarray[np.intp_t, ndim=1] sorted_children
-    cdef np.ndarray[np.double_t, ndim=1] sorted_lambdas
 
     cdef np.ndarray[np.intp_t, ndim=1] parents
     cdef np.ndarray[np.intp_t, ndim=1] sizes
     cdef np.ndarray[np.double_t, ndim=1] lambdas
+    cdef np.ndarray[np.intp_t, ndim=1] children
 
-    cdef np.intp_t child
     cdef np.intp_t parent
     cdef np.intp_t child_size
     cdef np.intp_t result_index
-    cdef np.intp_t current_child
     cdef np.float64_t lambda_
-    cdef np.float64_t min_lambda
 
     cdef np.ndarray[np.double_t, ndim=1] births_arr
     cdef np.double_t *births
@@ -192,38 +187,15 @@ cpdef dict compute_stability(np.ndarray condensed_tree):
     if largest_child < smallest_cluster:
         largest_child = smallest_cluster
 
-    sorted_child_data = np.sort(condensed_tree[['child', 'lambda_val']],
-                                axis=0)
-    births_arr = np.nan * np.ones(largest_child + 1, dtype=np.double)
-    births = (<np.double_t *> births_arr.data)
-    sorted_children = sorted_child_data['child'].copy()
-    sorted_lambdas = sorted_child_data['lambda_val'].copy()
-
+    children = condensed_tree['child']
     parents = condensed_tree['parent']
     sizes = condensed_tree['child_size']
     lambdas = condensed_tree['lambda_val']
 
-    current_child = -1
-    min_lambda = 0
-
-    for row in range(sorted_child_data.shape[0]):
-        child = <np.intp_t> sorted_children[row]
-        lambda_ = sorted_lambdas[row]
-
-        if child == current_child:
-            min_lambda = min(min_lambda, lambda_)
-        elif current_child != -1:
-            births[current_child] = min_lambda
-            current_child = child
-            min_lambda = lambda_
-        else:
-            # Initialize
-            current_child = child
-            min_lambda = lambda_
-
-    if current_child != -1:
-        births[current_child] = min_lambda
-    births[smallest_cluster] = 0.0
+    births_arr = np.full(largest_child + 1, np.inf, dtype=np.double)
+    np.minimum.at(births_arr, children, lambdas)
+    births_arr[smallest_cluster] = 0.0
+    births = (<np.double_t *> births_arr.data)
 
     result_arr = np.zeros(num_clusters, dtype=np.double)
 
@@ -235,11 +207,8 @@ cpdef dict compute_stability(np.ndarray condensed_tree):
 
         result_arr[result_index] += (lambda_ - births[parent]) * child_size
 
-    result_pre_dict = np.vstack((np.arange(smallest_cluster,
-                                           condensed_tree['parent'].max() + 1),
-                                 result_arr)).T
-
-    return dict(result_pre_dict)
+    return {int(smallest_cluster + i): result_arr[i]
+            for i in range(num_clusters)}
 
 
 cdef list bfs_from_cluster_tree(np.ndarray tree, np.intp_t bfs_root):
@@ -259,45 +228,11 @@ cdef list bfs_from_cluster_tree(np.ndarray tree, np.intp_t bfs_root):
 
 cdef max_lambdas(np.ndarray tree):
 
-    cdef np.ndarray sorted_parent_data
-    cdef np.ndarray[np.intp_t, ndim=1] sorted_parents
-    cdef np.ndarray[np.double_t, ndim=1] sorted_lambdas
-
-    cdef np.intp_t parent
-    cdef np.intp_t current_parent
-    cdef np.float64_t lambda_
-    cdef np.float64_t max_lambda
-
     cdef np.ndarray[np.double_t, ndim=1] deaths_arr
-    cdef np.double_t *deaths
-
     cdef np.intp_t largest_parent = tree['parent'].max()
 
-    sorted_parent_data = np.sort(tree[['parent', 'lambda_val']], axis=0)
     deaths_arr = np.zeros(largest_parent + 1, dtype=np.double)
-    deaths = (<np.double_t *> deaths_arr.data)
-    sorted_parents = sorted_parent_data['parent']
-    sorted_lambdas = sorted_parent_data['lambda_val']
-
-    current_parent = -1
-    max_lambda = 0
-
-    for row in range(sorted_parent_data.shape[0]):
-        parent = <np.intp_t> sorted_parents[row]
-        lambda_ = sorted_lambdas[row]
-
-        if parent == current_parent:
-            max_lambda = max(max_lambda, lambda_)
-        elif current_parent != -1:
-            deaths[current_parent] = max_lambda
-            current_parent = parent
-            max_lambda = lambda_
-        else:
-            # Initialize
-            current_parent = parent
-            max_lambda = lambda_
-    
-    deaths[current_parent] = max_lambda # value for last parent
+    np.maximum.at(deaths_arr, tree['parent'], tree['lambda_val'])
 
     return deaths_arr
 
