@@ -1624,34 +1624,33 @@ class HDBSCAN(BaseEstimator, ClusterMixin):
         # So let's call this value DSPC_wrt(Ci), i.e.
         # density separation 'with respect to' Ci.
         DSPC_wrt = np.ones(num_clusters) * np.inf
-        max_distance = 0
 
-        mst_df = self.minimum_spanning_tree_.to_pandas()
+        mst = self._min_spanning_tree
+        edge_from = mst.T[0].astype(np.intp)
+        edge_to = mst.T[1].astype(np.intp)
+        edge_dist = mst.T[2]
 
-        for edge in mst_df.iterrows():
-            label1 = labels[int(edge[1]["from"])]
-            label2 = labels[int(edge[1]["to"])]
-            length = edge[1]["distance"]
+        label1 = labels[edge_from]
+        label2 = labels[edge_to]
 
-            max_distance = max(max_distance, length)
+        max_distance = edge_dist.max() if edge_dist.shape[0] > 0 else 0.0
 
-            if label1 == -1 and label2 == -1:
-                continue
-            elif label1 == -1 or label2 == -1:
-                # If exactly one of the points is noise
-                min_outlier_sep = min(min_outlier_sep, length)
-                continue
+        both_noise = (label1 == -1) & (label2 == -1)
+        one_noise = (label1 == -1) ^ (label2 == -1)
+        neither_noise = ~both_noise & ~one_noise
 
-            if label1 == label2:
-                # Set the density sparseness of the cluster
-                # to the sparsest value seen so far.
-                DSC[label1] = max(length, DSC[label1])
-            else:
-                # Check whether density separations with
-                # respect to each of these clusters can
-                # be reduced.
-                DSPC_wrt[label1] = min(length, DSPC_wrt[label1])
-                DSPC_wrt[label2] = min(length, DSPC_wrt[label2])
+        if one_noise.any():
+            min_outlier_sep = edge_dist[one_noise].min()
+
+        same_cluster = neither_noise & (label1 == label2)
+        diff_cluster = neither_noise & (label1 != label2)
+
+        if same_cluster.any():
+            np.maximum.at(DSC, label1[same_cluster], edge_dist[same_cluster])
+
+        if diff_cluster.any():
+            np.minimum.at(DSPC_wrt, label1[diff_cluster], edge_dist[diff_cluster])
+            np.minimum.at(DSPC_wrt, label2[diff_cluster], edge_dist[diff_cluster])
 
         # In case min_outlier_sep is still np.inf, we assign a new value to it.
         # This only makes sense if num_clusters = 1 since it has turned out
@@ -1670,13 +1669,9 @@ class HDBSCAN(BaseEstimator, ClusterMixin):
         )
         DSPC_wrt[np.where(DSPC_wrt == np.inf)] = correction
 
-        V_index = [
-            (DSPC_wrt[i] - DSC[i]) / max(DSPC_wrt[i], DSC[i])
-            for i in range(num_clusters)
-        ]
-        score = np.sum(
-            [(cluster_size[i] * V_index[i]) / total for i in range(num_clusters)]
-        )
+        denom = np.maximum(DSPC_wrt, DSC)
+        V_index = (DSPC_wrt - DSC) / denom
+        score = np.sum(cluster_size * V_index / total)
         self._relative_validity = score
         return self._relative_validity
     
