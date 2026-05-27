@@ -21,14 +21,17 @@ cpdef np.ndarray[np.double_t, ndim=2] mst_linkage_core(
     cdef np.ndarray[np.double_t, ndim=2] result_arr = np.zeros((dim - 1, 3))
     cdef np.ndarray[np.int8_t, ndim=1] in_tree_arr = np.zeros(dim, dtype=np.int8)
     cdef np.ndarray[np.double_t, ndim=1] current_distances_arr = np.full(dim, DBL_MAX)
+    cdef np.ndarray[np.intp_t, ndim=1] current_sources_arr = np.zeros(dim, dtype=np.intp)
 
     cdef np.double_t *current_distances = <np.double_t *> current_distances_arr.data
+    cdef np.intp_t *current_sources = <np.intp_t *> current_sources_arr.data
     cdef np.int8_t *in_tree = <np.int8_t *> in_tree_arr.data
     cdef np.double_t[:, ::1] result = (<np.double_t[:dim - 1, :3:1]> (
         <np.double_t *> result_arr.data))
     cdef np.double_t[:, ::1] dist_view = distance_matrix
 
     cdef np.intp_t current_node = 0
+    cdef np.intp_t source_node
     cdef np.intp_t new_node
     cdef np.intp_t i, j
     cdef np.double_t new_distance, d
@@ -37,6 +40,7 @@ cpdef np.ndarray[np.double_t, ndim=2] mst_linkage_core(
         in_tree[current_node] = 1
         new_distance = DBL_MAX
         new_node = 0
+        source_node = 0
 
         for j in range(dim):
             if in_tree[j]:
@@ -45,12 +49,14 @@ cpdef np.ndarray[np.double_t, ndim=2] mst_linkage_core(
             d = dist_view[current_node, j]
             if d < current_distances[j]:
                 current_distances[j] = d
+                current_sources[j] = current_node
 
             if current_distances[j] < new_distance:
                 new_distance = current_distances[j]
+                source_node = current_sources[j]
                 new_node = j
 
-        result[i - 1, 0] = <double> current_node
+        result[i - 1, 0] = <double> source_node
         result[i - 1, 1] = <double> new_node
         result[i - 1, 2] = new_distance
         current_node = new_node
