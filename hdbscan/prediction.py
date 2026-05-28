@@ -18,6 +18,56 @@ from ._prediction_utils import (get_tree_row_with_child,
 from warnings import warn
 
 
+def _group_by_parent(tree):
+    """Group a raw condensed tree by the ``parent`` field in a single pass.
+
+    The condensed tree stores one row per (parent, child) edge. A lot of the
+    prediction code needs, for a given ``parent`` cluster, the maximum
+    ``lambda_val`` over its rows (and sometimes the rows themselves). The
+    historical idiom did that with a fresh boolean-mask scan of the *whole*
+    tree for every cluster::
+
+        tree['lambda_val'][tree['parent'] == cluster].max()
+
+    which is O(n) per cluster, i.e. O(n * num_clusters) overall (and a clean
+    O(n^2) when looping over every distinct parent). This helper does the
+    grouping once: O(n log n) to sort by parent, then a single grouped reduce.
+
+    Parameters
+    ----------
+    tree : structured ndarray
+        A raw condensed tree with at least ``parent`` and ``lambda_val`` fields.
+
+    Returns
+    -------
+    max_lambda : dict {int parent -> float max lambda_val among its rows}
+
+    row_indices : dict {int parent -> ndarray of row indices with that parent}
+        Indices are in ascending (original-row) order, so downstream selection
+        preserves the same ordering as the old boolean-mask approach.
+    """
+    parents = tree['parent']
+    if len(parents) == 0:
+        return {}, {}
+
+    # Stable sort keeps original row order within each parent group, so the
+    # row_indices arrays match the order a boolean mask would have produced.
+    order = np.argsort(parents, kind='stable')
+    sorted_parents = parents[order]
+    # boundaries[k] = first row of the k-th distinct parent in sorted order.
+    boundaries = np.concatenate((
+        [0],
+        np.flatnonzero(sorted_parents[1:] != sorted_parents[:-1]) + 1,
+    ))
+    keys = sorted_parents[boundaries]
+
+    group_max = np.maximum.reduceat(tree['lambda_val'][order], boundaries)
+    max_lambda = dict(zip(keys, group_max.tolist()))
+    # np.split returns views into `order` (no copy) -> one index array per parent
+    row_indices = dict(zip(keys, np.split(order, boundaries[1:])))
+    return max_lambda, row_indices
+
+
 class PredictionData(object):
     """
     Extra data that allows for faster prediction if cached.
@@ -118,13 +168,15 @@ class PredictionData(object):
         all_clusters = set(np.hstack([self.cluster_tree['parent'],
                                       self.cluster_tree['child']]))
 
+        # Group the raw tree by parent once instead of re-scanning it per
+        # cluster/leaf below (see _group_by_parent).
+        group_max_lambda, group_rows = _group_by_parent(raw_condensed_tree)
+
         for cluster in all_clusters:
-            self.leaf_max_lambdas[cluster] = raw_condensed_tree['lambda_val'][
-                raw_condensed_tree['parent'] == cluster].max()
+            self.leaf_max_lambdas[cluster] = group_max_lambda[cluster]
 
         for cluster in selected_clusters:
-            self.max_lambdas[cluster] = \
-                raw_condensed_tree['lambda_val'][raw_condensed_tree['parent'] == cluster].max()
+            self.max_lambdas[cluster] = group_max_lambda[cluster]
 
             for sub_cluster in self._clusters_below(cluster):
                 self.cluster_map[sub_cluster] = self.cluster_map[cluster]
@@ -132,11 +184,11 @@ class PredictionData(object):
 
             cluster_exemplars = np.array([], dtype=np.int64)
             for leaf in self._recurse_leaf_dfs(cluster):
-                leaf_max_lambda = raw_condensed_tree['lambda_val'][
-                    raw_condensed_tree['parent'] == leaf].max()
+                leaf_rows = group_rows[leaf]
+                leaf_max_lambda = group_max_lambda[leaf]
                 points = raw_condensed_tree['child'][
-                    (raw_condensed_tree['parent'] == leaf)
-                    & (raw_condensed_tree['lambda_val'] == leaf_max_lambda)
+                    leaf_rows[raw_condensed_tree['lambda_val'][leaf_rows]
+                              == leaf_max_lambda]
                 ]
                 cluster_exemplars = np.hstack([cluster_exemplars, points])
 
@@ -495,9 +547,8 @@ def approximate_predict_scores(clusterer, points_to_predict):
     parent_array = tree['parent']
 
     tree_root = parent_array.min()
-    max_lambdas = {}
-    for parent in np.unique(tree['parent']):
-        max_lambdas[parent] = tree[tree['parent'] == parent]['lambda_val'].max()
+    # Grouped max over parents in one pass (was an O(n^2) scan-per-parent loop).
+    max_lambdas, _ = _group_by_parent(tree)
 
     for n in range(tree.shape[0] - 1, -1, -1):
         parent = parent_array[n]
