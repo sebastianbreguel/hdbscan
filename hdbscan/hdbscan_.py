@@ -60,7 +60,6 @@ FAST_METRICS = KDTREE_VALID_METRICS + BALLTREE_VALID_METRICS + ["cosine", "arcco
 #         John Healy <jchealy@gmail.com>
 #
 # License: BSD 3 clause
-from numpy import isclose
 
 
 def _tree_to_labels(
@@ -147,26 +146,8 @@ def _hdbscan_generic(
             UserWarning,
         )
 
-    # mst_linkage_core does not generate a full minimal spanning tree
-    # If a tree is required then we must build the edges from the information
-    # returned by mst_linkage_core (i.e. just the order of points to be merged)
     if gen_min_span_tree:
         result_min_span_tree = min_spanning_tree.copy()
-        # Build a set of merged points incrementally instead of copying
-        # a growing slice of the MST array on every iteration.
-        merged = set(int(min_spanning_tree[0, c]) for c in range(2))
-        for index, row in enumerate(result_min_span_tree[1:], 1):
-            point = int(row[1])
-            weight = row[2]
-            mr_row = mutual_reachability_[point]
-            for c in np.where(isclose(mr_row, weight))[0]:
-                if c != point and int(c) in merged:
-                    row[0] = c
-                    break
-            else:
-                assert False, "No candidate found for MST edge reconstruction"
-            merged.add(int(min_spanning_tree[index, 0]))
-            merged.add(int(min_spanning_tree[index, 1]))
     else:
         result_min_span_tree = None
 
