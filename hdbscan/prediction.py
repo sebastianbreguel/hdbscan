@@ -118,13 +118,16 @@ class PredictionData(object):
         all_clusters = set(np.hstack([self.cluster_tree['parent'],
                                       self.cluster_tree['child']]))
 
+        # Max lambda per parent over the full condensed tree, computed once
+        # with a boolean-mask reduction per group (same peak memory as a
+        # single mask). The selected-cluster and leaf maxes below are the same
+        # quantity, so they are derived from this dict instead of rescanning.
         for cluster in all_clusters:
             self.leaf_max_lambdas[cluster] = raw_condensed_tree['lambda_val'][
                 raw_condensed_tree['parent'] == cluster].max()
 
         for cluster in selected_clusters:
-            self.max_lambdas[cluster] = \
-                raw_condensed_tree['lambda_val'][raw_condensed_tree['parent'] == cluster].max()
+            self.max_lambdas[cluster] = self.leaf_max_lambdas[cluster]
 
             for sub_cluster in self._clusters_below(cluster):
                 self.cluster_map[sub_cluster] = self.cluster_map[cluster]
@@ -132,8 +135,7 @@ class PredictionData(object):
 
             cluster_exemplars = np.array([], dtype=np.int64)
             for leaf in self._recurse_leaf_dfs(cluster):
-                leaf_max_lambda = raw_condensed_tree['lambda_val'][
-                    raw_condensed_tree['parent'] == leaf].max()
+                leaf_max_lambda = self.leaf_max_lambdas[leaf]
                 points = raw_condensed_tree['child'][
                     (raw_condensed_tree['parent'] == leaf)
                     & (raw_condensed_tree['lambda_val'] == leaf_max_lambda)
@@ -494,7 +496,6 @@ def approximate_predict_scores(clusterer, points_to_predict):
 
     parent_array = tree['parent']
 
-    tree_root = parent_array.min()
     max_lambdas = {}
     for parent in np.unique(tree['parent']):
         max_lambdas[parent] = tree[tree['parent'] == parent]['lambda_val'].max()
