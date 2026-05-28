@@ -69,7 +69,6 @@ cpdef np.ndarray condense_tree(np.ndarray[np.double_t, ndim=2] hierarchy,
     cdef np.intp_t num_points
     cdef np.intp_t next_label
     cdef list node_list
-    cdef list result_list
 
     cdef np.ndarray[np.intp_t, ndim=1] relabel
     cdef np.ndarray[np.int8_t, ndim=1] ignore
@@ -91,8 +90,14 @@ cpdef np.ndarray condense_tree(np.ndarray[np.double_t, ndim=2] hierarchy,
 
     relabel = np.empty(root + 1, dtype=np.intp)
     relabel[root] = num_points
-    result_list = []
     ignore = np.zeros(len(node_list), dtype=np.int8)
+
+    cdef np.intp_t max_result_size = 2 * num_points
+    cdef np.ndarray[np.intp_t, ndim=1] res_parent = np.empty(max_result_size, dtype=np.intp)
+    cdef np.ndarray[np.intp_t, ndim=1] res_child = np.empty(max_result_size, dtype=np.intp)
+    cdef np.ndarray[np.double_t, ndim=1] res_lambda = np.empty(max_result_size, dtype=np.double)
+    cdef np.ndarray[np.intp_t, ndim=1] res_size = np.empty(max_result_size, dtype=np.intp)
+    cdef np.intp_t pos = 0
 
     for node in node_list:
         if ignore[node] or node < num_points:
@@ -119,47 +124,58 @@ cpdef np.ndarray condense_tree(np.ndarray[np.double_t, ndim=2] hierarchy,
         if left_count >= min_cluster_size and right_count >= min_cluster_size:
             relabel[left] = next_label
             next_label += 1
-            result_list.append((relabel[node], relabel[left], lambda_value,
-                                left_count))
+            res_parent[pos] = relabel[node]; res_child[pos] = relabel[left]
+            res_lambda[pos] = lambda_value; res_size[pos] = left_count
+            pos += 1
 
             relabel[right] = next_label
             next_label += 1
-            result_list.append((relabel[node], relabel[right], lambda_value,
-                                right_count))
+            res_parent[pos] = relabel[node]; res_child[pos] = relabel[right]
+            res_lambda[pos] = lambda_value; res_size[pos] = right_count
+            pos += 1
 
         elif left_count < min_cluster_size and right_count < min_cluster_size:
             for sub_node in bfs_from_hierarchy(hierarchy, left):
                 if sub_node < num_points:
-                    result_list.append((relabel[node], sub_node,
-                                        lambda_value, 1))
+                    res_parent[pos] = relabel[node]; res_child[pos] = sub_node
+                    res_lambda[pos] = lambda_value; res_size[pos] = 1
+                    pos += 1
                 ignore[sub_node] = True
 
             for sub_node in bfs_from_hierarchy(hierarchy, right):
                 if sub_node < num_points:
-                    result_list.append((relabel[node], sub_node,
-                                        lambda_value, 1))
+                    res_parent[pos] = relabel[node]; res_child[pos] = sub_node
+                    res_lambda[pos] = lambda_value; res_size[pos] = 1
+                    pos += 1
                 ignore[sub_node] = True
 
         elif left_count < min_cluster_size:
             relabel[right] = relabel[node]
             for sub_node in bfs_from_hierarchy(hierarchy, left):
                 if sub_node < num_points:
-                    result_list.append((relabel[node], sub_node,
-                                        lambda_value, 1))
+                    res_parent[pos] = relabel[node]; res_child[pos] = sub_node
+                    res_lambda[pos] = lambda_value; res_size[pos] = 1
+                    pos += 1
                 ignore[sub_node] = True
 
         else:
             relabel[left] = relabel[node]
             for sub_node in bfs_from_hierarchy(hierarchy, right):
                 if sub_node < num_points:
-                    result_list.append((relabel[node], sub_node,
-                                        lambda_value, 1))
+                    res_parent[pos] = relabel[node]; res_child[pos] = sub_node
+                    res_lambda[pos] = lambda_value; res_size[pos] = 1
+                    pos += 1
                 ignore[sub_node] = True
 
-    return np.array(result_list, dtype=[('parent', np.intp),
-                                        ('child', np.intp),
-                                        ('lambda_val', float),
-                                        ('child_size', np.intp)])
+    cdef np.ndarray result = np.empty(pos, dtype=[('parent', np.intp),
+                                                   ('child', np.intp),
+                                                   ('lambda_val', float),
+                                                   ('child_size', np.intp)])
+    result['parent'] = res_parent[:pos]
+    result['child'] = res_child[:pos]
+    result['lambda_val'] = res_lambda[:pos]
+    result['child_size'] = res_size[:pos]
+    return result
 
 
 cpdef dict compute_stability(np.ndarray condensed_tree):
