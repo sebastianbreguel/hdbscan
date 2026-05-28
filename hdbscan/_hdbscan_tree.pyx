@@ -843,7 +843,10 @@ cpdef np.ndarray simplify_hierarchy(np.ndarray condensed_tree,
         parent_map[idx] = parent_map[parent - n_points]
     for idx, parent in enumerate(parent_map):
         n_skipped[idx] = parent != (idx + n_points)
-        parent_map[idx] = parent - n_skipped[: parent - n_points].sum()
+    cdef np.ndarray cumulative_skipped = np.cumsum(n_skipped)
+    for idx, parent in enumerate(parent_map):
+        offset = cumulative_skipped[parent - n_points - 1] if (parent - n_points) > 0 else 0
+        parent_map[idx] = parent - offset
 
     # apply changes
     cdef np.intp_t size
