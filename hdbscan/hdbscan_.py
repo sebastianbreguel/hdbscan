@@ -496,9 +496,15 @@ def is_finite(matrix):
 def get_finite_row_indices(matrix):
     """Returns the indices of the purely finite rows of a sparse matrix or dense ndarray"""
     if issparse(matrix):
-        row_indices = np.array(
-            [i for i, row in enumerate(matrix.tolil().data) if np.all(np.isfinite(row))]
-        )
+        m = matrix.tocsr()
+        # Per-row finite count via a cumulative sum indexed by indptr: avoids
+        # materializing a full LIL copy (lower peak RAM) and the pure-Python
+        # per-row scan. A row is finite iff all its stored elements are finite
+        # (structural zeros are finite), matching the original semantics.
+        csum = np.concatenate([[0], np.cumsum(np.isfinite(m.data))])
+        row_lengths = np.diff(m.indptr)
+        finite_counts = csum[m.indptr[1:]] - csum[m.indptr[:-1]]
+        row_indices = np.where(finite_counts == row_lengths)[0]
     else:
         row_indices = np.where(np.isfinite(matrix).sum(axis=1) == matrix.shape[1])[0]
     return row_indices
