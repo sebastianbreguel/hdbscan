@@ -354,12 +354,17 @@ def _find_cluster_and_probability(tree, cluster_tree, neighbor_indices,
     potential_cluster = neighbor_tree_row['parent']
 
     if neighbor_tree_row['lambda_val'] > lambda_:
-        # Find appropriate cluster based on lambda of new point
-        while potential_cluster > tree_root and \
-                cluster_tree['lambda_val'][cluster_tree['child']
-                                           == potential_cluster] >= lambda_:
-            potential_cluster = cluster_tree['parent'][cluster_tree['child']
-                                                       == potential_cluster][0]
+        # Walk up the cluster_tree to the appropriate cluster for the new
+        # point's lambda. Compute the child-match mask once per step and reuse
+        # it: the original evaluated ``cluster_tree['child'] ==
+        # potential_cluster`` in both the loop condition and its body, building
+        # the mask twice. This allocates strictly less (one mask per step, no
+        # hoisted field views), so peak RAM does not rise.
+        while potential_cluster > tree_root:
+            at_cluster = cluster_tree['child'] == potential_cluster
+            if not (cluster_tree['lambda_val'][at_cluster] >= lambda_):
+                break
+            potential_cluster = cluster_tree['parent'][at_cluster][0]
 
     if potential_cluster in cluster_map:
         cluster_label = cluster_map[potential_cluster]
