@@ -182,7 +182,10 @@ class PredictionData(object):
                 self.cluster_map[sub_cluster] = self.cluster_map[cluster]
                 self.max_lambdas[sub_cluster] = self.max_lambdas[cluster]
 
-            cluster_exemplars = np.array([], dtype=np.int64)
+            # Collect each leaf's exemplar points and concatenate once. The old
+            # code re-hstacked the growing array every iteration, copying all
+            # accumulated points each time (O(k^2) in the exemplar count).
+            exemplar_parts = []
             for leaf in self._recurse_leaf_dfs(cluster):
                 leaf_rows = group_rows[leaf]
                 leaf_max_lambda = group_max_lambda[leaf]
@@ -190,8 +193,10 @@ class PredictionData(object):
                     leaf_rows[raw_condensed_tree['lambda_val'][leaf_rows]
                               == leaf_max_lambda]
                 ]
-                cluster_exemplars = np.hstack([cluster_exemplars, points])
+                exemplar_parts.append(points)
 
+            cluster_exemplars = (np.hstack(exemplar_parts) if exemplar_parts
+                                 else np.array([], dtype=np.int64))
             self.exemplars.append(self.raw_data[cluster_exemplars])
 
 
