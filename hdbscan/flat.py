@@ -34,6 +34,7 @@ from ._hdbscan_tree import compute_stability, get_cluster_tree_leaves
 from .hdbscan_ import HDBSCAN, _tree_to_labels
 from .plots import _bfs_from_cluster_tree, _get_leaves
 from .prediction import (PredictionData,
+                         _cluster_tree_lookup,
                          _find_cluster_and_probability,
                          _find_neighbor_and_lambda,
                          _group_by_parent)
@@ -351,16 +352,23 @@ def approximate_predict_flat(clusterer,
                                               points_to_predict,
                                               k=2 * min_samples)
 
+    cluster_tree = prediction_data.cluster_tree
+    # Build the child -> (parent, lambda) lookup and root once, not per point.
+    cluster_tree_lookup = _cluster_tree_lookup(cluster_tree)
+    tree_root = cluster_tree['parent'].min()
+
     for i in range(points_to_predict.shape[0]):
         label, prob, neighbors = _find_cluster_and_probability(
             condensed_tree,
-            prediction_data.cluster_tree,
+            cluster_tree,
             neighbor_indices[i],
             neighbor_distances[i],
             prediction_data.core_distances,
             prediction_data.cluster_map,
             prediction_data.max_lambdas,
-            min_samples
+            min_samples,
+            cluster_tree_lookup,
+            tree_root,
         )
         labels[i] = label
         probabilities[i] = prob

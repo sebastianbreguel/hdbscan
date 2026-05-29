@@ -68,6 +68,24 @@ def _group_by_parent(tree):
     return max_lambda, row_indices
 
 
+def _cluster_tree_lookup(cluster_tree):
+    """Map each cluster's ``child`` id to its ``(parent, lambda_val)``.
+
+    Lets the per-point walk-up in ``_find_cluster_and_probability`` find a
+    cluster's parent in O(1) instead of re-scanning ``cluster_tree['child'] ==
+    potential_cluster`` (an O(C) boolean mask plus two indexed copies) on every
+    step of every point. Built once per predict call; the dict holds C entries
+    (only clusters, not points), replacing the transient per-step masks, so
+    peak memory does not rise.
+    """
+    return {
+        int(child): (int(parent), lambda_val)
+        for child, parent, lambda_val in zip(
+            cluster_tree["child"], cluster_tree["parent"], cluster_tree["lambda_val"]
+        )
+    }
+
+
 class PredictionData(object):
     """
     Extra data that allows for faster prediction if cached.
@@ -312,7 +330,8 @@ def _extend_condensed_tree(tree, neighbor_indices, neighbor_distances,
 def _find_cluster_and_probability(tree, cluster_tree, neighbor_indices,
                                   neighbor_distances, core_distances,
                                   cluster_map, max_lambdas,
-                                  min_samples):
+                                  min_samples, cluster_tree_lookup=None,
+                                  tree_root=None):
     """
     Return the cluster label (of the original clustering) and membership
     probability of a new data point.
@@ -347,7 +366,13 @@ def _find_cluster_and_probability(tree, cluster_tree, neighbor_indices,
         The min_samples value used to generate core distances.
     """
     raw_tree = tree._raw_tree
-    tree_root = cluster_tree['parent'].min()
+    # Callers predicting many points build the lookup/root once and pass them in
+    # (see approximate_predict); otherwise build them here. Either way the
+    # walk-up below has a single code path.
+    if cluster_tree_lookup is None:
+        cluster_tree_lookup = _cluster_tree_lookup(cluster_tree)
+    if tree_root is None:
+        tree_root = cluster_tree['parent'].min()
 
     nearest_neighbor, lambda_ = _find_neighbor_and_lambda(neighbor_indices,
                                                           neighbor_distances,
@@ -359,17 +384,15 @@ def _find_cluster_and_probability(tree, cluster_tree, neighbor_indices,
     potential_cluster = neighbor_tree_row['parent']
 
     if neighbor_tree_row['lambda_val'] > lambda_:
-        # Walk up the cluster_tree to the appropriate cluster for the new
-        # point's lambda. Compute the child-match mask once per step and reuse
-        # it: the original evaluated ``cluster_tree['child'] ==
-        # potential_cluster`` in both the loop condition and its body, building
-        # the mask twice. This allocates strictly less (one mask per step, no
-        # hoisted field views), so peak RAM does not rise.
+        # Walk up to the appropriate cluster for the new point's lambda. Each
+        # step is an O(1) dict lookup of (parent, lambda_val); the original
+        # re-scanned ``cluster_tree['child'] == potential_cluster`` (an O(C)
+        # mask plus indexed copies) on every step of every point.
         while potential_cluster > tree_root:
-            at_cluster = cluster_tree['child'] == potential_cluster
-            if not (cluster_tree['lambda_val'][at_cluster] >= lambda_):
+            entry = cluster_tree_lookup.get(int(potential_cluster))
+            if entry is None or not (entry[1] >= lambda_):
                 break
-            potential_cluster = cluster_tree['parent'][at_cluster][0]
+            potential_cluster = entry[0]
 
     if potential_cluster in cluster_map:
         cluster_label = cluster_map[potential_cluster]
@@ -469,16 +492,23 @@ def approximate_predict(clusterer, points_to_predict, return_connecting_points=F
         clusterer.prediction_data_.tree.query(points_to_predict,
                                               k=2 * min_samples)
 
+    cluster_tree = clusterer.prediction_data_.cluster_tree
+    # Build the child -> (parent, lambda) lookup and root once, not per point.
+    cluster_tree_lookup = _cluster_tree_lookup(cluster_tree)
+    tree_root = cluster_tree['parent'].min()
+
     for i in range(points_to_predict.shape[0]):
         label, prob, neighbor = _find_cluster_and_probability(
             clusterer.condensed_tree_,
-            clusterer.prediction_data_.cluster_tree,
+            cluster_tree,
             neighbor_indices[i],
             neighbor_distances[i],
             clusterer.prediction_data_.core_distances,
             clusterer.prediction_data_.cluster_map,
             clusterer.prediction_data_.max_lambdas,
-            min_samples
+            min_samples,
+            cluster_tree_lookup,
+            tree_root,
         )
         labels[i] = label
         probabilities[i] = prob
